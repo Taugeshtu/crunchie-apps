@@ -16,22 +16,38 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+const HINTS: &[&str] = &[
+    "// Try this:\n(1cm2 + 3mm^2) =",
+    "// Try this:\nradius = 10cm\narea = pi * radius^2\narea =",
+    "// Try this:\nsin(45deg) =",
+    "// Try this:\n60 mph to m/s=",
+    "// Try this:\nx = 5; y = 10; x + y =",
+];
+
 struct CrunchiePad {
     text: String,
     config: Config,
     needs_update: bool,
     pending_edits: Vec<crunchie_core::model::TextEdit>,
     is_first_frame: bool,
+    hint: String,
 }
 
 impl Default for CrunchiePad {
     fn default() -> Self {
+        let hint_index = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            % HINTS.len() as u128) as usize;
+
         Self {
             text: String::new(),
             config: Config::default(),
             needs_update: false,
             pending_edits: Vec::new(),
             is_first_frame: true,
+            hint: HINTS[hint_index].to_string(),
         }
     }
 }
@@ -120,7 +136,39 @@ impl eframe::App for CrunchiePad {
                                     .filter(|e| e.span.start.line == line_index as u32)
                                     .cloned()
                                     .collect();
+
+                                // Calculate the range of the inserted text for selection
+                                // We assume edits on the same line are contiguous or at least we want to select from the first to the last.
+                                let mut min_offset = usize::MAX;
+                                let mut total_added_len = 0;
+
+                                for edit in &line_edits {
+                                    let offset = edit.span.start.offset as usize;
+                                    if offset < min_offset {
+                                        min_offset = offset;
+                                    }
+                                    total_added_len += edit.new_text.chars().count();
+                                }
+
                                 self.text = crunchie_core::apply_edits(&self.text, &line_edits);
+
+                                // Map byte offset to char index for selection
+                                let start_char_index = self
+                                    .text
+                                    .char_indices()
+                                    .take_while(|(i, _)| *i < min_offset)
+                                    .count();
+                                let end_char_index = start_char_index + total_added_len;
+
+                                // Update state to select the new text
+                                let mut new_state = state.clone();
+                                let ccursor_range = egui::text::CCursorRange::two(
+                                    egui::text::CCursor::new(start_char_index),
+                                    egui::text::CCursor::new(end_char_index),
+                                );
+                                new_state.cursor.set_char_range(Some(ccursor_range));
+                                new_state.store(ctx, edit_id);
+
                                 self.pending_edits.clear();
                                 self.needs_update = true;
                             }
@@ -136,14 +184,24 @@ impl eframe::App for CrunchiePad {
             let rect = ui.available_rect_before_wrap();
 
             // Render ghost text
-            let ghost_text = generate_ghost_text(&self.text, &self.pending_edits);
+            let mut ghost_text = generate_ghost_text(&self.text, &self.pending_edits);
+            if ghost_text.is_empty() && self.text.trim().is_empty() {
+                ghost_text = self.hint.clone();
+            }
+
             if !ghost_text.is_empty() {
-                let font_id = egui::FontId::monospace(18.0);
-                let galley = ui.painter().layout_no_wrap(
-                    ghost_text,
-                    font_id,
-                    egui::Color32::from_gray(160),
+                let mut job = egui::text::LayoutJob::default();
+                job.append(
+                    &ghost_text,
+                    0.0,
+                    egui::TextFormat {
+                        font_id: egui::FontId::monospace(18.0),
+                        color: egui::Color32::from_gray(160),
+                        italics: true,
+                        ..Default::default()
+                    },
                 );
+                let galley = ui.fonts(|f| f.layout_job(job));
                 ui.painter().galley(
                     rect.min + egui::vec2(10.0, 10.0),
                     galley,
