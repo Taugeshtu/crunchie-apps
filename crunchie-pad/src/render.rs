@@ -48,10 +48,10 @@ pub fn build_highlight_map(
             if let Some(atom) = workspace.atoms.get(&entity.id) {
                 match atom {
                     Atom::Function(s) => {
-                        map.insert(entity.offset, (s.len(), HighlightType::Function));
+                        map.insert(entity.position.offset, (s.len(), HighlightType::Function));
                     }
                     Atom::Constant(s) => {
-                        map.insert(entity.offset, (s.len(), HighlightType::Constant));
+                        map.insert(entity.position.offset, (s.len(), HighlightType::Constant));
                     }
                     _ => {}
                 }
