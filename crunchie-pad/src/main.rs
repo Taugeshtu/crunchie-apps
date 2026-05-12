@@ -17,7 +17,7 @@ fn main() -> eframe::Result<()> {
 }
 
 const HINTS: &[&str] = &[
-    "// Try this:\n(1cm2 + 3mm^2) =",
+    "// Try this:\n(1cm2 + 3mm^2) *2 =",
     "// Try this:\nradius = 10cm\narea = pi * radius^2\narea =",
     "// Try this:\nsin(45deg) =",
     "// Try this:\n60 mph to m/s=",
@@ -52,6 +52,41 @@ impl Default for CrunchiePad {
     }
 }
 
+fn format_edit(edit: &crunchie_core::model::TextEdit) -> (String, std::ops::Range<usize>) {
+    if let Some(value) = &edit.value {
+        let mut ctx = fend_core::Context::new();
+        let int = fend_core::interrupt::Never;
+        let mut attrs = fend_core::eval::Attrs::default();
+        attrs.show_approx = false;
+
+        let mut spans = Vec::new();
+        if value
+            .format(0, &mut spans, attrs, false, &mut ctx, &int)
+            .is_ok()
+        {
+            let mut full_text = String::from(" ");
+            let mut num_start = 1;
+            let mut num_end = 1;
+            let mut found_number = false;
+
+            for span in spans {
+                if span.string == "approx. " {
+                    continue;
+                }
+                if span.kind == fend_core::SpanKind::Number && !found_number {
+                    num_start = full_text.chars().count();
+                    num_end = num_start + span.string.chars().count();
+                    found_number = true;
+                }
+                full_text.push_str(&span.string);
+            }
+            return (full_text, num_start..num_end);
+        }
+    }
+    let len = edit.new_text.chars().count();
+    (edit.new_text.clone(), 0..len)
+}
+
 fn generate_ghost_text(text: &str, edits: &[crunchie_core::model::TextEdit]) -> String {
     if edits.is_empty() {
         return String::new();
@@ -83,7 +118,8 @@ fn generate_ghost_text(text: &str, edits: &[crunchie_core::model::TextEdit]) -> 
             .count();
 
         if start_char <= ghost_chars.len() && end_char <= ghost_chars.len() {
-            let new_chars: Vec<char> = edit.new_text.chars().collect();
+            let (clean_text, _) = format_edit(&edit);
+            let new_chars: Vec<char> = clean_text.chars().collect();
             ghost_chars.splice(start_char..end_char, new_chars);
         }
     }
@@ -103,7 +139,12 @@ impl eframe::App for CrunchiePad {
         if !self.pending_edits.is_empty()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab))
         {
-            self.text = crunchie_core::apply_edits(&self.text, &self.pending_edits);
+            let mut all_edits = self.pending_edits.clone();
+            for edit in &mut all_edits {
+                let (clean, _) = format_edit(edit);
+                edit.new_text = clean;
+            }
+            self.text = crunchie_core::apply_edits(&self.text, &all_edits);
             self.pending_edits.clear();
             self.needs_update = true;
         }
@@ -138,19 +179,22 @@ impl eframe::App for CrunchiePad {
                                     .collect();
 
                                 // Calculate the range of the inserted text for selection
-                                // We assume edits on the same line are contiguous or at least we want to select from the first to the last.
                                 let mut min_offset = usize::MAX;
-                                let mut total_added_len = 0;
+                                let mut number_range_in_final = 0..0;
 
-                                for edit in &line_edits {
+                                let mut line_edits_mut = line_edits.clone();
+                                for edit in &mut line_edits_mut {
+                                    let (clean_text, num_range) = format_edit(edit);
+                                    edit.new_text = clean_text;
+
                                     let offset = edit.span.start.offset as usize;
                                     if offset < min_offset {
                                         min_offset = offset;
+                                        number_range_in_final = num_range;
                                     }
-                                    total_added_len += edit.new_text.chars().count();
                                 }
 
-                                self.text = crunchie_core::apply_edits(&self.text, &line_edits);
+                                self.text = crunchie_core::apply_edits(&self.text, &line_edits_mut);
 
                                 // Map byte offset to char index for selection
                                 let start_char_index = self
@@ -158,13 +202,15 @@ impl eframe::App for CrunchiePad {
                                     .char_indices()
                                     .take_while(|(i, _)| *i < min_offset)
                                     .count();
-                                let end_char_index = start_char_index + total_added_len;
+                                
+                                let sel_start = start_char_index + number_range_in_final.start;
+                                let sel_end = start_char_index + number_range_in_final.end;
 
                                 // Update state to select the new text
                                 let mut new_state = state.clone();
                                 let ccursor_range = egui::text::CCursorRange::two(
-                                    egui::text::CCursor::new(start_char_index),
-                                    egui::text::CCursor::new(end_char_index),
+                                    egui::text::CCursor::new(sel_start),
+                                    egui::text::CCursor::new(sel_end),
                                 );
                                 new_state.cursor.set_char_range(Some(ccursor_range));
                                 new_state.store(ctx, edit_id);
