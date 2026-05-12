@@ -24,6 +24,13 @@ const HINTS: &[&str] = &[
     "// Try this:\nx = 5; y = 10; x + y =",
 ];
 
+#[derive(Clone, Copy)]
+enum HighlightType {
+    Function,
+    Constant,
+    Comment,
+}
+
 struct CrunchiePad {
     text: String,
     config: Config,
@@ -31,6 +38,8 @@ struct CrunchiePad {
     pending_edits: Vec<crunchie_core::model::TextEdit>,
     is_first_frame: bool,
     hint: String,
+    workspace: Option<crunchie_core::model::Workspace>,
+    highlight_map: std::collections::BTreeMap<u32, (usize, HighlightType)>,
 }
 
 impl Default for CrunchiePad {
@@ -48,6 +57,8 @@ impl Default for CrunchiePad {
             pending_edits: Vec::new(),
             is_first_frame: true,
             hint: HINTS[hint_index].to_string(),
+            workspace: None,
+            highlight_map: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -125,6 +136,36 @@ fn generate_ghost_text(text: &str, edits: &[crunchie_core::model::TextEdit]) -> 
     }
 
     ghost_chars.into_iter().collect()
+}
+
+fn build_highlight_map(
+    workspace: &crunchie_core::model::Workspace,
+) -> std::collections::BTreeMap<u32, (usize, HighlightType)> {
+    let mut map = std::collections::BTreeMap::new();
+
+    // 1. Comments
+    for comment in &workspace.comments {
+        let len = (comment.end.offset - comment.start.offset) as usize;
+        map.insert(comment.start.offset, (len, HighlightType::Comment));
+    }
+
+    // 2. Functions and Constants
+    for container in workspace.containers.values() {
+        for entity in &container.contents {
+            if let Some(atom) = workspace.atoms.get(&entity.id) {
+                match atom {
+                    crunchie_core::model::Atom::Function(s) => {
+                        map.insert(entity.offset, (s.len(), HighlightType::Function));
+                    }
+                    crunchie_core::model::Atom::Constant(s) => {
+                        map.insert(entity.offset, (s.len(), HighlightType::Constant));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    map
 }
 
 impl eframe::App for CrunchiePad {
@@ -255,11 +296,72 @@ impl eframe::App for CrunchiePad {
                 );
             }
 
+            let highlight_map = self.highlight_map.clone();
+            let mut layouter = |ui: &egui::Ui, string: &str, _wrap_width: f32| {
+                let mut job = egui::text::LayoutJob::default();
+                let mut current_byte = 0;
+                let mut chars = string.chars().peekable();
+
+                while let Some(c) = chars.next() {
+                    let byte_len = c.len_utf8();
+                    let start_byte = current_byte;
+
+                    if let Some((len, h_type)) = highlight_map.get(&(start_byte as u32)) {
+                        let mut text = String::from(c);
+                        let mut consumed = byte_len;
+                        while consumed < *len {
+                            if let Some(next_c) = chars.next() {
+                                text.push(next_c);
+                                consumed += next_c.len_utf8();
+                            } else {
+                                break;
+                            }
+                        }
+
+                        let format = match h_type {
+                            HighlightType::Function => egui::TextFormat {
+                                font_id: egui::FontId::monospace(18.0),
+                                color: egui::Color32::from_rgb(0, 70, 200), // Deep blue
+                                italics: true,
+                                ..Default::default()
+                            },
+                            HighlightType::Constant => egui::TextFormat {
+                                font_id: egui::FontId::monospace(18.0),
+                                color: egui::Color32::from_rgb(140, 0, 200), // Purple
+                                ..Default::default()
+                            },
+                            HighlightType::Comment => egui::TextFormat {
+                                font_id: egui::FontId::monospace(18.0),
+                                color: egui::Color32::from_gray(120),
+                                italics: true,
+                                ..Default::default()
+                            },
+                        };
+                        job.append(&text, 0.0, format);
+                        current_byte += consumed;
+                        continue;
+                    }
+
+                    job.append(
+                        &c.to_string(),
+                        0.0,
+                        egui::TextFormat {
+                            font_id: egui::FontId::monospace(18.0),
+                            color: ui.visuals().text_color(),
+                            ..Default::default()
+                        },
+                    );
+                    current_byte += byte_len;
+                }
+                ui.fonts(|f| f.layout_job(job))
+            };
+
             let edit = ui
                 .centered_and_justified(|ui| {
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut self.text)
                             .id(edit_id)
+                            .layouter(&mut layouter)
                             .font(egui::FontId::monospace(18.0))
                             .frame(false)
                             .desired_width(f32::INFINITY)
@@ -275,7 +377,7 @@ impl eframe::App for CrunchiePad {
                 })
                 .inner;
 
-            if edit.changed() || self.needs_update {
+            if edit.changed() || self.needs_update || self.workspace.is_none() {
                 let builtins = crunchie_core::builtins::generate_symbol_map();
                 let constants = self.config.constants.keys().map(|s| s.as_str());
 
@@ -284,7 +386,10 @@ impl eframe::App for CrunchiePad {
                     crunchie_core::evaluate(&self.text, &mut workspace, &self.config);
 
                 self.pending_edits = engine_result.edits;
+                self.highlight_map = build_highlight_map(&workspace);
+                self.workspace = Some(workspace);
                 self.needs_update = false;
+                ctx.request_repaint();
             }
         });
     }
