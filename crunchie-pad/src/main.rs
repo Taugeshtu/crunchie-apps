@@ -1,6 +1,5 @@
-use eframe::egui;
 use crunchie_core::config::Config;
-use std::time::{Duration, Instant};
+use eframe::egui;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -19,7 +18,6 @@ fn main() -> eframe::Result<()> {
 
 struct CrunchiePad {
     text: String,
-    last_edit: Instant,
     config: Config,
     needs_update: bool,
     pending_edits: Vec<crunchie_core::model::TextEdit>,
@@ -30,7 +28,6 @@ impl Default for CrunchiePad {
     fn default() -> Self {
         Self {
             text: String::new(),
-            last_edit: Instant::now(),
             config: Config::default(),
             needs_update: false,
             pending_edits: Vec::new(),
@@ -60,8 +57,14 @@ fn generate_ghost_text(text: &str, edits: &[crunchie_core::model::TextEdit]) -> 
         let end_byte = edit.span.end.offset as usize;
 
         // Map byte offsets to char indices safely
-        let start_char = text.char_indices().take_while(|(i, _)| *i < start_byte).count();
-        let end_char = text.char_indices().take_while(|(i, _)| *i < end_byte).count();
+        let start_char = text
+            .char_indices()
+            .take_while(|(i, _)| *i < start_byte)
+            .count();
+        let end_char = text
+            .char_indices()
+            .take_while(|(i, _)| *i < end_byte)
+            .count();
 
         if start_char <= ghost_chars.len() && end_char <= ghost_chars.len() {
             let new_chars: Vec<char> = edit.new_text.chars().collect();
@@ -78,14 +81,53 @@ impl eframe::App for CrunchiePad {
         visuals.panel_fill = egui::Color32::from_rgb(255, 240, 150); // Sticky note yellow
         ctx.set_visuals(visuals);
 
-        // Handle Tab to commit
+        let edit_id = egui::Id::new("crunchie-edit");
+
+        // Handle Tab to commit ALL
         if !self.pending_edits.is_empty()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab))
         {
             self.text = crunchie_core::apply_edits(&self.text, &self.pending_edits);
             self.pending_edits.clear();
             self.needs_update = true;
-            self.last_edit = Instant::now();
+        }
+
+        // Handle Enter to commit current line
+        if !self.pending_edits.is_empty() {
+            if let Some(state) = egui::TextEdit::load_state(ctx, edit_id) {
+                if let Some(char_range) = state.cursor.char_range() {
+                    if char_range.primary == char_range.secondary {
+                        let ccursor = char_range.primary;
+                        // Map absolute char index to line/col
+                        let text_before: String = self.text.chars().take(ccursor.index).collect();
+                        let line_index = text_before.chars().filter(|&c| c == '\n').count();
+                        let line_text = self.text.split('\n').nth(line_index).unwrap_or("");
+                        let col_index = text_before.split('\n').last().unwrap_or("").chars().count();
+
+                        if col_index == line_text.chars().count() {
+                            let has_edit = self
+                                .pending_edits
+                                .iter()
+                                .any(|e| e.span.start.line == line_index as u32);
+                            if has_edit
+                                && ctx.input_mut(|i| {
+                                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                                })
+                            {
+                                let line_edits: Vec<_> = self
+                                    .pending_edits
+                                    .iter()
+                                    .filter(|e| e.span.start.line == line_index as u32)
+                                    .cloned()
+                                    .collect();
+                                self.text = crunchie_core::apply_edits(&self.text, &line_edits);
+                                self.pending_edits.clear();
+                                self.needs_update = true;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -113,6 +155,7 @@ impl eframe::App for CrunchiePad {
                 .centered_and_justified(|ui| {
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut self.text)
+                            .id(edit_id)
                             .font(egui::FontId::monospace(18.0))
                             .frame(false)
                             .desired_width(f32::INFINITY)
@@ -128,14 +171,7 @@ impl eframe::App for CrunchiePad {
                 })
                 .inner;
 
-            if edit.changed() {
-                self.last_edit = Instant::now();
-                self.needs_update = true;
-                self.pending_edits.clear();
-            }
-
-            // Debounce: 500ms
-            if self.needs_update && self.last_edit.elapsed() >= Duration::from_millis(500) {
+            if edit.changed() || self.needs_update {
                 let builtins = crunchie_core::builtins::generate_symbol_map();
                 let constants = self.config.constants.keys().map(|s| s.as_str());
 
@@ -147,10 +183,6 @@ impl eframe::App for CrunchiePad {
                 self.needs_update = false;
             }
         });
-
-        // Keep the UI responsive for the debounce timer
-        if self.needs_update {
-            ctx.request_repaint_after(Duration::from_millis(100));
-        }
     }
 }
+
