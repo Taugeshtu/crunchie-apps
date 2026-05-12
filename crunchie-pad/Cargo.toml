@@ -2,6 +2,10 @@
 name = "crunchie-pad"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tykhon Gusiev"]
+license = "GPL-3.0-only"
+description = "A minimal sticky-note math pad powered by the Crunchie engine."
+repository = "https://github.com/Taugeshtu/crunchie-apps"
 
 [dependencies]
 crunchie-core = { path = "../crunchie-core" }
