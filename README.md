@@ -1,6 +1,11 @@
-# Crunchie Apps
-
 A monorepo for applications powered by the **Crunchie** math engine.
+
+## Crunchie-pad
+
+![Crunchie Pad](./docs/Crunchie-pad.png)
+["Proof of life" application for the core](./crunchie-pad): It's like sticky notes, but with math.
+- Just write your math, with or without units, like a normal person
+- Hitting `tab` will apply gray "autocalculations"
 
 ## Installation
 
@@ -16,9 +21,3 @@ If you have the repository cloned locally:
 ```bash
 cargo install --path crunchie-pad
 ```
-
-## Projects
-
-*   **[crunchie-core](https://github.com/Taugeshtu/crunchie-core)**: The central Rust library. Handles parsing, topology normalization, and evaluation.
-*   **[crunchie-pad](./crunchie-pad)**: A minimal "sticky notes" style desktop app for live math scratchpadding.
-
