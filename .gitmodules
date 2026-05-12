@@ -1,0 +1,3 @@
+[submodule "crunchie-core"]
+	path = crunchie-core
+	url = git@github.com:Taugeshtu/crunchie-core.git
