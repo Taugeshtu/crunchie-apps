@@ -280,6 +280,12 @@ impl eframe::App for CrunchiePad {
 
                 self.pending_edits = engine_result.edits;
                 self.highlight_map = render::build_highlight_map(&workspace);
+                
+                // Merge all diagnostics for display
+                let mut all_diagnostics = workspace.diagnostics.clone();
+                all_diagnostics.extend(engine_result.diagnostics);
+                workspace.diagnostics = all_diagnostics;
+
                 self.workspace = Some(workspace);
                 self.needs_update = false;
                 ctx.request_repaint();
