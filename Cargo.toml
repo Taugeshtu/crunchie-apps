@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crunchie-core",
+    "crunchie-pad",
+]
+resolver = "2"
