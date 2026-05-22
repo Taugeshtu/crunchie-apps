@@ -8,17 +8,20 @@ A monorepo for applications powered by the **Crunchie** math engine.
 - Just write your math, with or without units, like a normal person
 - Hitting `tab` will apply gray "autocalculations"
 
-## Installation
+## Install
 
-You can install the apps directly from this repository using `cargo`.
+Dependencies:
+- [rust installed in your system](https://rust-lang.org/tools/install/)
 
-### From GitHub
+Build & install with cargo:
 ```bash
 cargo install --git https://github.com/Taugeshtu/crunchie-apps crunchie-pad
 ```
 
-### From Local Source
-If you have the repository cloned locally:
+_Alternatively:_
 ```bash
-cargo install --path crunchie-pad
+# navigate to where you want it to live, for example, ~/Applications/Gits
+git clone https://github.com/Taugeshtu/crunchie-apps
+cd crunchie-apps
+cargo install --path crunchie-pad --root ~/.local
 ```
